@@ -1,0 +1,159 @@
+# AWS SAM Template for Personalized Learning Assistant
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: LearnAI - Personalized Learning Assistant Backend
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Environment:
+      Variables:
+        USERS_TABLE: !Ref UsersTable
+        PROGRESS_TABLE: !Ref ProgressTable
+        BEDROCK_MODEL_ID: anthropic.claude-3-haiku-20240307-v1:0
+        PASSAGE_BUCKET: !Ref PassageBucket
+
+Resources:
+  # ===== API Gateway =====
+  LearnAIApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+
+  # ===== Lambda Functions =====
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/auth/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        Auth:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LearnAIApi
+            Path: /auth
+            Method: POST
+
+  ComprehensionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/comprehension/
+      Handler: index.handler
+      Timeout: 60
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: '*'
+      Events:
+        Comprehension:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LearnAIApi
+            Path: /comprehension
+            Method: POST
+
+  HomeworkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/homework/
+      Handler: index.handler
+      Timeout: 60
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: '*'
+      Events:
+        Homework:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LearnAIApi
+            Path: /homework
+            Method: POST
+
+  ProgressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/progress/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProgressTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        GetProgress:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LearnAIApi
+            Path: /progress
+            Method: GET
+        PostProgress:
+          Type: Api
+          Properties:
+            RestApiId: !Ref LearnAIApi
+            Path: /progress
+            Method: POST
+
+  # ===== DynamoDB Tables =====
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: LearnAI_Users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+
+  ProgressTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: LearnAI_Progress
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+  # ===== S3 Bucket for Passages =====
+  PassageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub learnai-passages-${AWS::AccountId}
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ['*']
+            AllowedMethods: [GET, PUT]
+            AllowedHeaders: ['*']
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${LearnAIApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+  UsersTableName:
+    Value: !Ref UsersTable
+  ProgressTableName:
+    Value: !Ref ProgressTable
+  PassageBucketName:
+    Value: !Ref PassageBucket
